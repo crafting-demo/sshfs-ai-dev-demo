@@ -1,0 +1,113 @@
+workspaces:
+- name: dev
+  description: Developer workspace whose home directory is shared over SSH for the AI workspace to review code.
+  env:
+  - DEV_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtrD7gLMkT+JP5UtquoYcW7VRt5hkb9fhOp6cO/mkDv dev-ai-sshfs
+  system:
+    files:
+    - path: /home/owner/bin/authorize-dev-ssh.sh
+      mode: "0755"
+      overwrite: true
+      content: |
+        #!/bin/bash
+        set -euo pipefail
+
+        mkdir -p "${HOME}/.ssh"
+        chmod 700 "${HOME}/.ssh"
+
+        AUTH_KEYS="${HOME}/.ssh/authorized_keys"
+        touch "${AUTH_KEYS}"
+        chmod 600 "${AUTH_KEYS}"
+
+        if ! grep -Fxq "${DEV_PUBLIC_KEY}" "${AUTH_KEYS}"; then
+          printf '%s\n' "${DEV_PUBLIC_KEY}" >> "${AUTH_KEYS}"
+        fi
+
+        printf '%s\n' "${DEV_PUBLIC_KEY}" > "${HOME}/.ssh/dev-ai.pub"
+        chmod 644 "${HOME}/.ssh/dev-ai.pub"
+  lifecycle:
+    on_create:
+      run:
+        cmd: ~/bin/authorize-dev-ssh.sh
+- name: ai
+  description: AI workspace mounting the dev workspace via SSHFS to analyze commits.
+  wait_for:
+  - dev
+  env:
+  - DEV_SERVICE_HOST=dev
+  - DEV_PRIVATE_KEY=${secret:dev-ai-private-key}
+  - DEV_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtrD7gLMkT+JP5UtquoYcW7VRt5hkb9fhOp6cO/mkDv dev-ai-sshfs
+  system:
+    files:
+    - path: /home/owner/bin/mount-dev.sh
+      mode: "0755"
+      overwrite: true
+      content: |
+        #!/bin/bash
+        set -euo pipefail
+
+        REMOTE_HOST="${DEV_SERVICE_HOST:-dev}"
+        REMOTE_PATH="/home/owner"
+        MOUNT_POINT="${HOME}/dev-workspace"
+
+        if ! command -v sshfs >/dev/null 2>&1; then
+          if command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y sshfs
+          else
+            apt-get update
+            apt-get install -y sshfs
+          fi
+        fi
+
+        mkdir -p "${HOME}/.ssh"
+        chmod 700 "${HOME}/.ssh"
+
+        printf '%s\n' "${DEV_PRIVATE_KEY}" > "${HOME}/.ssh/dev-ai"
+        chmod 600 "${HOME}/.ssh/dev-ai"
+
+        printf '%s\n' "${DEV_PUBLIC_KEY}" > "${HOME}/.ssh/dev-ai.pub"
+        chmod 644 "${HOME}/.ssh/dev-ai.pub"
+
+        if ! grep -q "${REMOTE_HOST}" "${HOME}/.ssh/known_hosts" 2>/dev/null; then
+          ssh-keyscan -H "${REMOTE_HOST}" >> "${HOME}/.ssh/known_hosts"
+        fi
+
+        mkdir -p "${MOUNT_POINT}"
+
+        if mountpoint -q "${MOUNT_POINT}"; then
+          fusermount -u "${MOUNT_POINT}" || umount "${MOUNT_POINT}" || true
+        fi
+
+        sshfs "owner@${REMOTE_HOST}:${REMOTE_PATH}" "${MOUNT_POINT}" \
+          -o IdentityFile="${HOME}/.ssh/dev-ai" \
+          -o IdentitiesOnly=yes \
+          -o StrictHostKeyChecking=yes \
+          -o reconnect \
+          -o follow_symlinks
+    - path: /home/owner/bin/unmount-dev.sh
+      mode: "0755"
+      overwrite: true
+      content: |
+        #!/bin/bash
+        set -euo pipefail
+
+        MOUNT_POINT="${HOME}/dev-workspace"
+
+        if mountpoint -q "${MOUNT_POINT}"; then
+          fusermount -u "${MOUNT_POINT}" || umount "${MOUNT_POINT}" || true
+        fi
+  lifecycle:
+    on_create:
+      run:
+        cmd: ~/bin/mount-dev.sh
+    on_suspend:
+      run:
+        cmd: ~/bin/unmount-dev.sh
+    on_resume:
+      run:
+        cmd: ~/bin/mount-dev.sh
+    on_delete:
+      run:
+        cmd: ~/bin/unmount-dev.sh
+
