@@ -33,6 +33,8 @@ workspaces:
   description: AI workspace mounting the dev workspace via SSHFS to analyze commits.
   wait_for:
   - dev
+  restriction:
+    life_time: ALWAYS
   env:
   - DEV_SERVICE_HOST=dev
   - DEV_PRIVATE_KEY=${secret:dev-ai-private-key}

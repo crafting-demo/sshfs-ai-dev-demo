@@ -1,8 +1,6 @@
 # SSHFS Sandbox Walkthrough
 
-This walkthrough pairs two Crafting workspaces—`dev` and `ai`—using SSHFS so an AI agent can inspect the developer’s filesystem in real time. The AI workspace mounts the `dev` home directory, reads the repository contents, writes review feedback, and blocks pushes when feedback is missing. The template wires secrets for an SSH key pair: the private key lives in a Crafting secret referenced via `${secret:dev-ai-private-key}`, while the public key is injected as plain text.
-
-Use this guide immediately after creating the `sshfs-ai` sandbox from `dev-ai-sshfs.yaml`. Every step assumes you are working inside the Crafting Console Web IDE (VS Code in the browser).
+This walkthrough pairs two Crafting workspaces—dev and ai—using SSHFS so an AI agent can inspect the developer’s filesystem in real time. The AI workspace mounts the dev home directory, reads the repository contents, writes review feedback, and blocks pushes when feedback is missing. It runs with restriction mode set to “ALWAYS,” meaning the AI environment stays locked to its predefined access rules for the entire sandbox lifetime. The template wires secrets for an SSH key pair: the private key lives in a Crafting secret referenced via ${secret:dev-ai-private-key}, while the public key is injected as plain text.
 
 ---
 
