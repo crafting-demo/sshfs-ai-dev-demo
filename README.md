@@ -119,14 +119,14 @@ The remaining steps simulate the workflow: a developer commits code in `dev`, th
        }
 
        if ! check_file 'test -f ~/post-commit-AI-review'; then
-         printf 'AI review marker missing in AI workspace. Run a commit to trigger AI review.\n' >&2
+         printf "AI review marker missing in AI workspace. Run a commit to trigger AI review.\n" >&2
          exit 1
        fi
 
        REVIEW_CONTENT="$(check_file 'cat ~/post-commit-AI-review' | tr -d '\r\n')"
 
-      if [[ "${REVIEW_CONTENT}" != "true" ]]; then
-        printf 'AI review marker must contain "true" (found "%s"). Resolve before pushing.\n' "${REVIEW_CONTENT}" >&2
+       if [[ "${REVIEW_CONTENT}" != "true" ]]; then
+         printf "AI review marker must contain \"true\" (found \"%s\"). Resolve before pushing.\n" "${REVIEW_CONTENT}" >&2
          exit 1
        fi
 
