@@ -1,8 +1,10 @@
+env:
+  - DEV_SERVICE_HOST=dev
+  - DEV_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtrD7gLMkT+JP5UtquoYcW7VRt5hkb9fhOp6cO/mkDv dev-ai-sshfs
+  - DEV_PRIVATE_KEY=${secret:dev-ai-private-key}
 workspaces:
 - name: dev
   description: Developer workspace whose home directory is shared over SSH for the AI workspace to review code.
-  env:
-  - DEV_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtrD7gLMkT+JP5UtquoYcW7VRt5hkb9fhOp6cO/mkDv dev-ai-sshfs
   system:
     files:
     - path: /home/owner/bin/authorize-dev-ssh.sh
@@ -35,10 +37,6 @@ workspaces:
   - dev
   restriction:
     life_time: ALWAYS
-  env:
-  - DEV_SERVICE_HOST=dev
-  - DEV_PRIVATE_KEY=${secret:dev-ai-private-key}
-  - DEV_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtrD7gLMkT+JP5UtquoYcW7VRt5hkb9fhOp6cO/mkDv dev-ai-sshfs
   system:
     files:
     - path: /home/owner/bin/mount-dev.sh
