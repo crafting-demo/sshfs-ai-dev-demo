@@ -1,6 +1,14 @@
 # SSHFS Sandbox Walkthrough
 
-This walkthrough pairs two Crafting workspaces—dev and ai—using SSHFS so an AI agent can inspect the developer’s filesystem in real time. The AI workspace mounts the dev home directory, reads the repository contents, writes review feedback, and blocks pushes when feedback is missing. It runs with restriction mode set to “ALWAYS,” meaning the AI environment stays locked to its predefined access rules for the entire sandbox lifetime. The template wires secrets for an SSH key pair: the private key lives in a Crafting secret referenced via ${secret:dev-ai-private-key}, while the public key is injected as plain text.
+This walkthrough pairs two Crafting workspaces—**dev** and **ai**—using SSHFS. This setup demonstrates how an AI agent, running in a restricted environment, can monitor a developer's workspace and interact through the filesystem.
+
+The AI workspace mounts the developer's home directory via SSHFS. The "restriction" mode is set to `ALWAYS`, meaning the AI environment stays locked to its predefined access rules, but it can still "see" the developer's work through the mount.
+
+### Communication Flow:
+1.  **Developer Commits**: A `post-commit` hook in the `dev` workspace creates a "signal" file (e.g., `.git/review-requested`) in the repository.
+2.  **AI Monitors**: The AI workspace, monitoring the mounted `dev` workspace, detects the new file and initiates a (simulated) code review.
+3.  **AI Results**: After the review, the AI writes a result file (e.g., `.git/review-status`) back to the mounted `dev` workspace.
+4.  **Push Protection**: A `pre-push` hook in the `dev` workspace checks the result file and blocks the push if the AI review has not passed.
 
 ---
 
@@ -15,161 +23,97 @@ Perform these steps **before** creating the sandbox so the template has the righ
 
 2. **Create the Crafting secret for the private key**
    ```bash
-   cs secret create dev-ai-private-key -f dev-ai-temp-key
+   # The secret must be --shared so both workspaces can potentially access it
+   cs secret create dev-ai-private-key --shared -f dev-ai-temp-key
    ```
 
 3. **Update the template with the public key**
-   - Open `dev-ai-temp-key.pub`, copy the full `ssh-ed25519 …` line, and paste it into the `DEV_PUBLIC_KEY` entries in `dev-ai-sshfs.yaml`.
+   - Open `dev-ai-temp-key.pub`, copy the full `ssh-ed25519 …` line, and paste it into the `DEV_PUBLIC_KEY` entry in `dev-ai-sshfs.yaml`.
 
 4. **Delete the local private key file**
    ```bash
    rm dev-ai-temp-key
    ```
-   Keep the `.pub` file if you want a local record.
 
-With those steps complete, create the sandbox using the updated template.
+5. **Create the sandbox**
+   ```bash
+   cs sandbox create sshfs-ai-demo --from def:dev-ai-sshfs.yaml --wait
+   ```
 
 ---
 
 ## Verify the SSHFS Mount
 
 1. **Open the AI workspace Web IDE**  
-   In the Crafting Console, click the `ai` workspace and choose **Open Web IDE**.
-
+   In the Crafting Console, open the Web IDE for the `ai` workspace.
 2. **Confirm the mount is present**  
-   In the Web IDE, you should see `owner@dev:/home/owner` mounted on `/home/owner/dev-workspace`.
-
-3. **Explore the mounted folder**  
-   Use the Explorer sidebar to expand `/home/owner/dev-workspace`. You’re browsing the developer’s home directory directly from the AI workspace.
-
-4. **Create a test file from AI (appears in dev)**  
-   - Right-click inside `/home/owner/dev-workspace` and select **New File**.
-   - Name it `sshfs-link-check.txt`, open it in the editor, and type:
-     ```
-     SSHFS test via AI
-     ```
-   - Save the file (`Ctrl+S`).
-
-5. **Verify from the dev workspace**  
-   - Open the Web IDE for the `dev` workspace.
-   - In its Explorer, locate `~/sshfs-link-check.txt` and confirm it contains `SSHFS test via AI`.
-
-6. **Clean up (optional)**  
-   Delete `sshfs-link-check.txt` from either workspace’s Explorer (or keep it as a marker).
+   You should see `dev-workspace` in the Explorer. This is the `dev` workspace's home directory.
 
 ---
 
-## Configure Cross-Workspace Git Hooks
+## Configure the Demo Workflow
 
-The remaining steps simulate the workflow: a developer commits code in `dev`, the AI workspace analyzes the repo over SSHFS, and a pre-push hook blocks the push until AI feedback is present.
+In this step, we will set up the local Git hooks in the `dev` workspace that use the filesystem to "talk" to the AI.
 
-1. **Create the project in the dev workspace**  
-   - In the `dev` Web IDE, create `~/dev-ai-demo`.  
-   - Open the folder so it appears in the Explorer tree.
-
-2. **Initialize Git**
+1. **Initialize a demo project in the `dev` workspace**
    ```bash
+   mkdir -p ~/dev-ai-demo
    cd ~/dev-ai-demo
    git init
+   echo "# Demo Project" > README.md
+   git add README.md
+   git commit -m "Initial commit"
    ```
 
-3. **Add initial files**
-   - Create `README.md` with:
-     ```
-     # Dev to AI SSHFS Demo
+2. **Add the post-commit "Signal" hook**
+   Create `~/dev-ai-demo/.git/hooks/post-commit`:
+   ```bash
+   #!/bin/bash
+   # Signal to the AI that a new commit is ready for review
+   echo "pending" > .git/review-status
+   echo "AI review requested for commit $(git rev-parse HEAD)"
+   ```
+   `chmod +x .git/hooks/post-commit`
 
-     Example repo integrating AI workspace checks.
-     ```
-   - Create `.gitignore` containing:
-     ```
-     post-commit-AI-review
-     ```
-   - Stage and commit:
-     ```bash
-     cd ~/dev-ai-demo
-     git add README.md .gitignore
-     git commit -m "Initial commit"
-     ```
+3. **Add the pre-push "Protection" hook**
+   Create `~/dev-ai-demo/.git/hooks/pre-push`:
+   ```bash
+   #!/bin/bash
+   # Block push unless AI review-status is "approved"
+   STATUS=$(cat .git/review-status 2>/dev/null || echo "missing")
+   if [ "$STATUS" != "approved" ]; then
+     echo "Push rejected: AI review status is '$STATUS'. Must be 'approved'."
+     exit 1
+   fi
+   echo "AI review approved. Proceeding with push."
+   ```
+   `chmod +x .git/hooks/pre-push`
 
-4. **Create the Git hooks**
-   - In the Explorer, open `~/dev-ai-demo/.git/hooks` and add:
-     - `post-commit`
-       ```bash
-       #!/bin/bash
-       set -euo pipefail
+---
 
-       AI_HOST="${AI_HOST:-ai}"
-       AI_SSH_KEY="${HOME}/.ssh/dev-ai"
+## Test the Interaction
 
-       ssh -i "${AI_SSH_KEY}" -o BatchMode=yes -o StrictHostKeyChecking=yes owner@"${AI_HOST}" \
-         "echo true > ~/post-commit-AI-review"
-       ```
-     - `pre-push`
-       ```bash
-       #!/bin/bash
-       set -euo pipefail
+1.  **Make a commit in `dev`**
+    ```bash
+    echo "New feature" >> README.md
+    git commit -a -m "Add new feature"
+    ```
+    The `post-commit` hook will set the status to `pending`.
 
-       AI_HOST="${AI_HOST:-ai}"
-       AI_SSH_KEY="${HOME}/.ssh/dev-ai"
+2.  **Try to push**
+    ```bash
+    git push origin master  # (Assuming you set up a remote)
+    ```
+    The `pre-push` hook will block this because the status is `pending`.
 
-       check_file() {
-         ssh -i "${AI_SSH_KEY}" -o BatchMode=yes -o StrictHostKeyChecking=yes owner@"${AI_HOST}" "$@"
-       }
+3.  **Simulate AI Review (from `ai` workspace)**
+    In the `ai` workspace, navigate to the mounted directory and "approve" the commit:
+    ```bash
+    echo "approved" > ~/dev-workspace/dev-ai-demo/.git/review-status
+    ```
 
-       if ! check_file 'test -f ~/post-commit-AI-review'; then
-         printf "AI review marker missing in AI workspace. Run a commit to trigger AI review.\n" >&2
-         exit 1
-       fi
-
-       REVIEW_CONTENT="$(check_file 'cat ~/post-commit-AI-review' | tr -d '\r\n')"
-
-       if [[ "${REVIEW_CONTENT}" != "true" ]]; then
-         printf "AI review marker must contain \"true\" (found \"%s\"). Resolve before pushing.\n" "${REVIEW_CONTENT}" >&2
-         exit 1
-       fi
-
-       exit 0
-       ```
-   - In the terminal:
-     ```bash
-     chmod +x ~/dev-ai-demo/.git/hooks/post-commit
-     chmod +x ~/dev-ai-demo/.git/hooks/pre-push
-     ```
-
-5. **Test the post-commit hook**
-   - Append a line (for example, “Another line”) to `README.md` in the dev workspace.
-   - Commit:
-     ```bash
-     cd ~/dev-ai-demo
-     git add README.md
-     git commit -m "Run post-commit hook"
-     ```
-   - In the AI workspace Explorer, open `~/post-commit-AI-review` and confirm it now contains `true` (the notional “AI approval”).
-
-6. **Test the pre-push hook**
-   - Create a bare repo to act as an origin:
-     ```bash
-     mkdir -p ~/dev-ai-demo-remote.git
-     cd ~/dev-ai-demo-remote.git && git init --bare
-     cd ~/dev-ai-demo && git remote add origin ~/dev-ai-demo-remote.git
-     ```
-   - In the AI workspace terminal, simulate a failed review:
-     ```bash
-     echo false > ~/post-commit-AI-review
-     ```
-   - Back in the dev terminal, attempt a push:
-     ```bash
-     cd ~/dev-ai-demo
-     git push origin master
-     ```
-     The push should be rejected because the AI review marker is not `true`.
-   - Reset the marker in the AI workspace:
-     ```bash
-     echo true > ~/post-commit-AI-review
-     ```
-   - Push again from the dev workspace:
-     ```bash
-     cd ~/dev-ai-demo
-     git push origin master
-     ```
-     The push now succeeds.
+4.  **Push again from `dev`**
+    ```bash
+    git push origin master
+    ```
+    The push will now succeed!

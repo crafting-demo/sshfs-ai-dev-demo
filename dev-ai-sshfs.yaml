@@ -1,6 +1,6 @@
 env:
   - DEV_SERVICE_HOST=dev
-  - DEV_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAtrD7gLMkT+JP5UtquoYcW7VRt5hkb9fhOp6cO/mkDv dev-ai-sshfs
+  - DEV_PUBLIC_KEY=ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEesSP5g1rdTldHb7OZaybBspRT+AjD6ztcFTpH2gZLU dev-ai-sshfs
   - DEV_PRIVATE_KEY=${secret:dev-ai-private-key}
 workspaces:
 - name: dev
@@ -110,4 +110,3 @@ workspaces:
     on_delete:
       run:
         cmd: ~/bin/unmount-dev.sh
-
